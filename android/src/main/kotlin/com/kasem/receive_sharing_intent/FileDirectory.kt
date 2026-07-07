@@ -8,15 +8,13 @@ import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.provider.OpenableColumns
+import android.util.Log
+import android.webkit.MimeTypeMap
 import java.io.File
 import java.io.FileOutputStream
-import java.util.*
-import android.webkit.MimeTypeMap
-import android.util.Log
-
 
 object FileDirectory {
-
     /**
      * Get a file path from a Uri. This will get the the path for Storage Access
      * Framework Documents, as well as the _data field for the MediaStore and
@@ -26,8 +24,10 @@ object FileDirectory {
      * @param uri The Uri to query.
      * @author paulburke
      */
-    fun getAbsolutePath(context: Context, uri: Uri): String? {
-
+    fun getAbsolutePath(
+        context: Context,
+        uri: Uri,
+    ): String? {
         // DocumentProvider
         if (DocumentsContract.isDocumentUri(context, uri)) {
             // ExternalStorageProvider
@@ -44,8 +44,8 @@ object FileDirectory {
             } else if (isDownloadsDocument(uri)) {
                 return try {
                     val id = DocumentsContract.getDocumentId(uri)
-                    val contentUri = ContentUris.withAppendedId(
-                            Uri.parse("content://downloads/public_downloads"), java.lang.Long.valueOf(id))
+                    val contentUri =
+                        ContentUris.withAppendedId(Uri.parse("content://downloads/public_downloads"), java.lang.Long.valueOf(id))
 
                     getDataColumn(context, contentUri, null, null)
                 } catch (exception: Exception) {
@@ -68,7 +68,7 @@ object FileDirectory {
                 val selection = "_id=?"
                 val selectionArgs = arrayOf(split[1])
                 return getDataColumn(context, contentUri, selection, selectionArgs)
-            }// MediaProvider
+            } // MediaProvider
             // DownloadsProvider
         } else if ("content".equals(uri.scheme, ignoreCase = true)) {
             return getDataColumn(context, uri, null, null)
@@ -87,49 +87,63 @@ object FileDirectory {
      * @param selectionArgs (Optional) Selection arguments used in the query.
      * @return The value of the _data column, which is typically a file path.
      */
-    private fun getDataColumn(context: Context, uri: Uri, selection: String?,
-                              selectionArgs: Array<String>?): String? {
-
+    private fun getDataColumn(
+        context: Context,
+        uri: Uri,
+        selection: String?,
+        selectionArgs: Array<String>?,
+    ): String? {
         if (uri.authority != null) {
             var cursor: Cursor? = null
-            val column = "_display_name"
+            val column = OpenableColumns.DISPLAY_NAME
             val projection = arrayOf(column)
             var targetFile: File? = null
             try {
                 cursor = context.contentResolver.query(uri, projection, selection, selectionArgs, null)
                 if (cursor != null && cursor.moveToFirst()) {
-                    val columnIndex = cursor.getColumnIndexOrThrow(column)
-                    val fileName = cursor.getString(columnIndex)
-                    Log.i("FileDirectory", "File name: $fileName")
-                    targetFile = File(context.cacheDir, fileName)
+                    val columnIndex = cursor.getColumnIndex(column)
+                    if (columnIndex >= 0) {
+                        val fileName = cursor.getString(columnIndex)
+                        if (!fileName.isNullOrBlank()) {
+                            targetFile = File(context.cacheDir, File(fileName).name)
+                        }
+                    }
                 }
+            } catch (e: Exception) {
+                Log.w("FileDirectory", "Error retrieving file name: ${e.message}")
             } finally {
                 cursor?.close()
             }
 
             if (targetFile == null) {
                 val mimeType = context.contentResolver.getType(uri)
-                val prefix = with(mimeType ?: "") {
-                    when {
-                        startsWith("image") -> "IMG"
-                        startsWith("video") -> "VID"
-                        else -> "FILE"
+                val prefix =
+                    with(mimeType ?: "") {
+                        when {
+                            startsWith("image") -> "IMG"
+                            startsWith("video") -> "VID"
+                            else -> "FILE"
+                        }
                     }
-                }
                 val type = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType)
                 targetFile = File(context.cacheDir, "${prefix}_${Date().time}.$type")
             }
 
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(targetFile).use { fileOut ->
-                    input.copyTo(fileOut)
+            return try {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(targetFile).use { fileOut ->
+                        input.copyTo(fileOut)
+                    }
                 }
+                targetFile.path
+            } catch (e: Exception) {
+                Log.w("FileDirectory", "Error copying file to cache: ${e.message}")
+                null
             }
-            return targetFile.path
         }
 
         var cursor: Cursor? = null
-        val column = "_data"
+        val column = MediaStore.MediaColumns.DATA
         val projection = arrayOf(column)
 
         try {
@@ -144,28 +158,21 @@ object FileDirectory {
         return null
     }
 
-
     /**
      * @param uri The Uri to check.
      * @return Whether the Uri authority is ExternalStorageProvider.
      */
-    fun isExternalStorageDocument(uri: Uri): Boolean {
-        return "com.android.externalstorage.documents" == uri.authority
-    }
+    fun isExternalStorageDocument(uri: Uri): Boolean = "com.android.externalstorage.documents" == uri.authority
 
     /**
      * @param uri The Uri to check.
      * @return Whether the Uri authority is DownloadsProvider.
      */
-    fun isDownloadsDocument(uri: Uri): Boolean {
-        return "com.android.providers.downloads.documents" == uri.authority
-    }
+    fun isDownloadsDocument(uri: Uri): Boolean = "com.android.providers.downloads.documents" == uri.authority
 
     /**
      * @param uri The Uri to check.
      * @return Whether the Uri authority is MediaProvider.
      */
-    fun isMediaDocument(uri: Uri): Boolean {
-        return "com.android.providers.media.documents" == uri.authority
-    }
+    fun isMediaDocument(uri: Uri): Boolean = "com.android.providers.media.documents" == uri.authority
 }
